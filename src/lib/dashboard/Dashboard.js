@@ -1,7 +1,6 @@
 /* eslint-disable class-methods-use-this */
 
 // Node stuff
-const url = require("url");
 const { join, sep } = require("path");
 
 // Settings
@@ -18,6 +17,10 @@ const passport = require("passport");
 const session = require("express-session");
 const { Strategy } = require("passport-discord");
 const helmet = require("helmet");
+
+// Routes
+const home = require("./routes/home");
+const guilds = require("./routes/guilds");
 
 // Other stuff
 const DashboardUser = require("./DashboardUser");
@@ -61,6 +64,8 @@ class Dashboard {
      * @type {external:Discord.Collection}
      */
     this.users = new this.client.methods.Collection();
+
+    this.init();
   }
 
   /**
@@ -90,9 +95,9 @@ class Dashboard {
   }
 
   /**
-   * Starts the web server.
+   * Inits all express dependencies.
    */
-  start() {
+  init() {
     passport.serializeUser((user, done) => {
       done(null, user);
     });
@@ -101,7 +106,7 @@ class Dashboard {
     });
 
     passport.use(new Strategy({
-      clientID: this.client.user.id,
+      clientID: settings ? settings.dash.clientID : this.client.user.id,
       clientSecret: settings ? settings.dash.oauthSecret : process.env.DASH_OAUTH_SECRET,
       callbackURL: settings ? settings.dash.callback : process.env.DASH_CALLBACK_URL,
       scope: ["identify", "guilds"],
@@ -137,13 +142,14 @@ class Dashboard {
     app.use(express.static(this.dataDir));
     // Docs page
     app.use("/docs", express.static(join(this.client.clientBaseDir, "../docs")));
+  }
 
+  /**
+   * Starts the web server.
+   */
+  start() {
     // Home page
-    app.get("/", (req, res) => res.render(`${this.dataDir}index.ejs`, {
-      client: this.client,
-      user: req.isAuthenticated() ? this.users.get(req.user) : null,
-      auth: req.isAuthenticated(),
-    }));
+    app.use(home(this, { app, passport }));
 
     // Commands page
     app.get("/commands", (req, res) => res.render(`${this.dataDir}commands.ejs`, {
@@ -151,31 +157,6 @@ class Dashboard {
       user: req.isAuthenticated() ? this.users.get(req.user) : null,
       auth: req.isAuthenticated(),
     }));
-
-    // Login
-    app.get("/login", (req, res, next) => {
-      if (req.session.backURL) {
-        req.session.backURL = req.session.backURL;
-      } else if (req.headers.referer) {
-        const parsed = url.parse(req.headers.referer);
-        if (parsed.hostname === app.locals.domain) {
-          req.session.backURL = parsed.path;
-        }
-      } else {
-        req.session.backURL = "/";
-      }
-      next();
-    }, passport.authenticate("discord"));
-
-    // Callback
-    app.get("/callback", passport.authenticate("discord", { failureRedirect: "/autherror" }), (req, res) => {
-      if (req.session.backURL) {
-        res.redirect(req.session.backURL);
-        req.session.backURL = null;
-      } else {
-        res.redirect("/");
-      }
-    });
 
     // Admin page
     app.get("/admin", this.checkAdmin, (req, res) => res.render(`${this.dataDir}admin.ejs`, {
@@ -192,21 +173,7 @@ class Dashboard {
     }));
 
     // Guild page
-    app.get("/guilds/:id", this.checkAuth, (req, res) => {
-      const guild = this.client.guilds.get(req.params.id);
-      return res.render(`${this.dataDir}guilds.ejs`, {
-        client: this.client,
-        user: req.isAuthenticated() ? this.users.get(req.user) : null,
-        auth: req.isAuthenticated(),
-        guild,
-      });
-    });
-
-    // Logout
-    app.get("/logout", (req, res) => {
-      req.logout();
-      res.redirect("/");
-    });
+    app.use("/guilds", guilds(this, this.checkAuth));
 
     // 404 Page
     app.use((req, res) => res.status(404).render(`${this.dataDir}404.ejs`, {
@@ -215,11 +182,8 @@ class Dashboard {
       auth: req.isAuthenticated(),
     }));
 
-    // Set port to 80
-    app.set("port", this.port);
-
     // Listen on port 80
-    app.listen(app.get("port"), () => this.client.emit("log", `Dashboard started. Listening on port ${app.get("port")}.`, "log"));
+    app.listen(this.port, () => this.client.emit("log", `Dashboard started. Listening on port ${this.port}.`, "log"));
   }
 }
 
